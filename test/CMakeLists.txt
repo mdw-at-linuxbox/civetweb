@@ -51,6 +51,10 @@ find_package(LibRt)
 if (LIBRT_FOUND)
   set(CHECK_LIBRARIES "${CHECK_LIBRARIES};LIBRT::LIBRT")
 endif()
+find_package(LibSubunit)
+if (LIBSUBUNIT_FOUND)
+  set(CHECK_LIBRARIES "${CHECK_LIBRARIES};LIBSUBUNIT::LIBSUBUNIT")
+endif()
 
 # Build the C unit tests
 add_library(shared-c-unit-tests STATIC shared.c)
@@ -123,6 +127,8 @@ macro(civetweb_add_test suite test_case)
     set_tests_properties(${test} PROPERTIES
       ENVIRONMENT "PATH=${test_path}\\;$<TARGET_FILE_DIR:c-library>")
   endif()
+  set_tests_properties(${test} PROPERTIES
+    ENVIRONMENT "TEST_CERT_DIR=${CMAKE_SOURCE_DIR}/resources/")
 endmacro(civetweb_add_test)
 
 

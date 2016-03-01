@@ -86,22 +86,22 @@ static void test_parse_http_message()
 	char req8[] = " HTTP/1.1 200 OK \n\n";
 	char req9[] = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
 
-	ASSERT(parse_http_message(req9, sizeof(req9), &ri) == sizeof(req9) - 1);
+	ASSERT(parse_http_message(1, req9, sizeof(req9), &ri) == sizeof(req9) - 1);
 	ASSERT(ri.num_headers == 1);
 
-	ASSERT(parse_http_message(req1, sizeof(req1), &ri) == sizeof(req1) - 1);
+	ASSERT(parse_http_message(1, req1, sizeof(req1), &ri) == sizeof(req1) - 1);
 	ASSERT(strcmp(ri.http_version, "1.1") == 0);
 	ASSERT(ri.num_headers == 0);
 
-	ASSERT(parse_http_message(req2, sizeof(req2), &ri) == -1);
-	ASSERT(parse_http_message(req3, sizeof(req3), &ri) == 0);
-	ASSERT(parse_http_message(req6, sizeof(req6), &ri) == 0);
-	ASSERT(parse_http_message(req7, sizeof(req7), &ri) == 0);
-	ASSERT(parse_http_message("", 0, &ri) == 0);
-	ASSERT(parse_http_message(req8, sizeof(req8), &ri) == sizeof(req8) - 1);
+	ASSERT(parse_http_message(1, req2, sizeof(req2), &ri) == -1);
+	ASSERT(parse_http_message(1, req3, sizeof(req3), &ri) == 0);
+	ASSERT(parse_http_message(1, req6, sizeof(req6), &ri) == 0);
+	ASSERT(parse_http_message(1, req7, sizeof(req7), &ri) == 0);
+	ASSERT(parse_http_message(1, "", 0, &ri) == 0);
+	ASSERT(parse_http_message(1, req8, sizeof(req8), &ri) == sizeof(req8) - 1);
 
 	/* TODO(lsm): Fix this. Header value may span multiple lines. */
-	ASSERT(parse_http_message(req4, sizeof(req4), &ri) == sizeof(req4) - 1);
+	ASSERT(parse_http_message(1, req4, sizeof(req4), &ri) == sizeof(req4) - 1);
 	ASSERT(strcmp(ri.http_version, "1.1") == 0);
 	ASSERT(ri.num_headers == 3);
 	ASSERT(strcmp(ri.http_headers[0].name, "A") == 0);
@@ -111,7 +111,7 @@ static void test_parse_http_message()
 	ASSERT(strcmp(ri.http_headers[2].name, "baz\r\n\r") == 0);
 	ASSERT(strcmp(ri.http_headers[2].value, "") == 0);
 
-	ASSERT(parse_http_message(req5, sizeof(req5), &ri) == sizeof(req5) - 1);
+	ASSERT(parse_http_message(1, req5, sizeof(req5), &ri) == sizeof(req5) - 1);
 	ASSERT(strcmp(ri.request_method, "GET") == 0);
 	ASSERT(strcmp(ri.http_version, "1.1") == 0);
 }
@@ -127,7 +127,7 @@ static void test_should_keep_alive(void)
 
 	memset(&conn, 0, sizeof(conn));
 	conn.ctx = &ctx;
-	ASSERT(parse_http_message(req1, sizeof(req1), &conn.request_info) ==
+	ASSERT(parse_http_message(1, req1, sizeof(req1), &conn.request_info) ==
 	       sizeof(req1) - 1);
 
 	ctx.config[ENABLE_KEEP_ALIVE] = "no";
@@ -140,13 +140,13 @@ static void test_should_keep_alive(void)
 	ASSERT(should_keep_alive(&conn) == 0);
 
 	conn.must_close = 0;
-	parse_http_message(req2, sizeof(req2), &conn.request_info);
+	parse_http_message(1, req2, sizeof(req2), &conn.request_info);
 	ASSERT(should_keep_alive(&conn) == 0);
 
-	parse_http_message(req3, sizeof(req3), &conn.request_info);
+	parse_http_message(1, req3, sizeof(req3), &conn.request_info);
 	ASSERT(should_keep_alive(&conn) == 0);
 
-	parse_http_message(req4, sizeof(req4), &conn.request_info);
+	parse_http_message(1, req4, sizeof(req4), &conn.request_info);
 	ASSERT(should_keep_alive(&conn) == 1);
 
 	conn.status_code = 401;
@@ -423,6 +423,33 @@ static const char *OPTIONS[] = {
 #endif
     NULL,
 };
+
+const char **
+test_options()
+{
+	char *cp;
+	int i;
+	static char *options_copied[sizeof OPTIONS / sizeof *OPTIONS];
+	static char *fixup_table[] = {"TEST_CERT_DIR",
+	                              "ssl_certificate",
+	                              "TEST_PORTS",
+	                              "listening_ports",
+	                              NULL};
+
+	memcpy(options_copied, OPTIONS, sizeof OPTIONS);
+	for (j = 0; fixup_table[j]; j += 2) {
+		cp = getenv(fixup_table[0]);
+		if (!cp)
+			return OPTIONS;
+		for (i = 0; options_copied[i]; i += 2) {
+			if (!strcmp(options_copied[i], fixup_table[j + 1])) {
+				options_copied[i + 1] = cp;
+				break;
+			}
+		}
+	}
+	return options_copied;
+}
 
 static char *read_conn(struct mg_connection *conn, int *size)
 {
@@ -1030,7 +1057,7 @@ static void test_lua(void)
 	conn.buf = http_request;
 	conn.buf_size = conn.data_len = strlen(http_request);
 	conn.request_len =
-	    parse_http_message(conn.buf, conn.data_len, &conn.request_info);
+	    parse_http_message(1, conn.buf, conn.data_len, &conn.request_info);
 	conn.content_len = conn.data_len - conn.request_len;
 
 	prepare_lua_environment(&conn, L, "unit_test", LUA_ENV_TYPE_PLAIN_LUA_PAGE);

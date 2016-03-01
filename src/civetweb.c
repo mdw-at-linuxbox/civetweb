@@ -1083,6 +1083,8 @@ enum {
 #endif
 	ACCESS_CONTROL_ALLOW_ORIGIN,
 	ERROR_PAGES,
+	VALIDATE_HTTP_METHOD,
+	CANONICALIZE_URL_PATH,
 
 	NUM_OPTIONS
 };
@@ -1152,6 +1154,8 @@ static struct mg_option config_options[] = {
 #endif
     {"access_control_allow_origin", CONFIG_TYPE_STRING, "*"},
     {"error_pages", CONFIG_TYPE_DIRECTORY, NULL},
+    {"validate_http_method", CONFIG_TYPE_BOOLEAN, "yes"},
+    {"canonicalize_url_path", CONFIG_TYPE_BOOLEAN, "yes"},
 
     {NULL, CONFIG_TYPE_UNKNOWN, NULL}};
 
@@ -1881,6 +1885,11 @@ mg_cry(const struct mg_connection *conn, const char *fmt, ...)
 	}
 }
 
+void
+mg_set_http_status(struct mg_connection *conn, int status)
+{
+	conn->status_code = status;
+}
 
 /* Return fake connection structure. Used for logging, if connection
  * is not applicable at the moment of logging. */
@@ -2117,6 +2126,16 @@ should_decode_url(const struct mg_connection *conn)
 	}
 
 	return (mg_strcasecmp(conn->ctx->config[DECODE_URL], "yes") == 0);
+}
+
+static int
+should_validate_http_method(const struct mg_connection *conn)
+{
+	if (!conn || !conn->ctx || !conn->ctx->config[VALIDATE_HTTP_METHOD]) {
+		return 1;
+	}
+
+	return (mg_strcasecmp(conn->ctx->config[VALIDATE_HTTP_METHOD], "yes") == 0);
 }
 
 
@@ -4654,20 +4673,28 @@ get_request_len(const char *buf, int buflen)
 {
 	const char *s, *e;
 	int len = 0;
+	int in_content = 0;
 
-	for (s = buf, e = s + buflen - 1; len <= 0 && s < e; s++)
+	for (s = buf, e = s + buflen - 1; len <= 0 && s < e; s++) {
 		/* Control characters are not allowed but >=128 is. */
-		if (!isprint(*(const unsigned char *)s) && *s != '\r' && *s != '\n'
+		if (!in_content && !isprint(*(const unsigned char *)s) && *s != '\r'
+		    && *s != '\n'
 		    && *(const unsigned char *)s < 128) {
 			len = -1;
 			break; /* [i_a] abort scan as soon as one malformed character is
-			        * found; */
+			       * found; */
 			/* don't let subsequent \r\n\r\n win us over anyhow */
 		} else if (s[0] == '\n' && s[1] == '\n') {
 			len = (int)(s - buf) + 2;
 		} else if (s[0] == '\n' && &s[1] < e && s[1] == '\r' && s[2] == '\n') {
 			len = (int)(s - buf) + 3;
+			in_content = 0;
 		}
+
+		if (!in_content && *s == ':') {
+			in_content = 1;
+		}
+	}
 
 	return len;
 }
@@ -5671,6 +5698,7 @@ connect_socket(struct mg_context *ctx /* may be NULL */,
 		return 0;
 	}
 
+#ifndef NO_SSL_DL
 	if (use_ssl && (SSLv23_client_method == NULL)) {
 		mg_snprintf(NULL,
 		            NULL, /* No truncation check for ebuf */
@@ -5680,6 +5708,7 @@ connect_socket(struct mg_context *ctx /* may be NULL */,
 		            "SSL is not initialized");
 		return 0;
 	}
+#endif
 
 	if (mg_inet_pton(AF_INET, host, &sa->sin, sizeof(sa->sin))) {
 		sa->sin.sin_port = htons((uint16_t)port);
@@ -6582,7 +6611,10 @@ is_valid_http_method(const char *method)
  * This function modifies the buffer by NUL-terminating
  * HTTP request components, header names and header values. */
 static int
-parse_http_message(char *buf, int len, struct mg_request_info *ri)
+parse_http_message(int check_method,
+                   char *buf,
+                   int len,
+                   struct mg_request_info *ri)
 {
 	int is_request, request_length;
 
@@ -6611,7 +6643,8 @@ parse_http_message(char *buf, int len, struct mg_request_info *ri)
 
 		/* HTTP message could be either HTTP request or HTTP response, e.g.
 		 * "GET / HTTP/1.0 ...." or  "HTTP/1.0 200 OK ..." */
-		is_request = is_valid_http_method(ri->request_method);
+		is_request =
+		    check_method ? is_valid_http_method(ri->request_method) : 1;
 		if ((is_request && memcmp(ri->http_version, "HTTP/", 5) != 0)
 		    || (!is_request && memcmp(ri->request_method, "HTTP/", 5) != 0)) {
 			request_length = -1;
@@ -9588,9 +9621,10 @@ handle_request(struct mg_connection *conn)
 		}
 
 		/* 1.3. clean URIs, so a path like allowed_dir/../forbidden_file is
-		 * not
-		 * possible */
-		remove_double_dots_and_double_slashes((char *)ri->local_uri);
+		 * not possible (if config says so) */
+		if (!mg_strcasecmp(conn->ctx->config[CANONICALIZE_URL_PATH], "yes")) {
+			remove_double_dots_and_double_slashes((char *)ri->local_uri);
+		}
 
 		/* step 1. completed, the url is known now */
 		DEBUG_TRACE("URL: %s", ri->local_uri);
@@ -11429,6 +11463,7 @@ static int
 getreq(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 {
 	const char *cl;
+	int check_method = should_validate_http_method(conn);
 
 	if (ebuf_len > 0) {
 		ebuf[0] = '\0';
@@ -11496,9 +11531,9 @@ getreq(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 			*err = 0;
 		}
 		return 0;
-	} else if (parse_http_message(conn->buf,
-	                              conn->buf_size,
-	                              &conn->request_info) <= 0) {
+	} else if (parse_http_message(
+	               check_method, conn->buf, conn->buf_size, &conn->request_info)
+	           <= 0) {
 		mg_snprintf(conn,
 		            NULL, /* No truncation check for ebuf */
 		            ebuf,

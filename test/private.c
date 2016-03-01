@@ -51,36 +51,42 @@ START_TEST(test_parse_http_message)
 	/* Copyright (c) 2004-2013 Sergey Lyubka */
 	struct mg_request_info ri;
 	char empty[] = "";
+		/* beware: parse_http_message scribbles over buf! */
 	char req1[] = "GET / HTTP/1.1\r\n\r\n";
 	char req2[] = "BLAH / HTTP/1.1\r\n\r\n";
+	char req2a[] = "BLAH / HTTP/1.1\r\n\r\n";
 	char req3[] = "GET / HTTP/1.1\r\nBah\r\n";
 	char req4[] = "GET / HTTP/1.1\r\nA: foo bar\r\nB: bar\r\nbaz\r\n\r\n";
 	char req5[] = "GET / HTTP/1.1\r\n\r\n";
 	char req6[] = "G";
+	char req6a[] = "G";
 	char req7[] = " blah ";
 	char req8[] = " HTTP/1.1 200 OK \n\n";
 	char req9[] = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
 
 	ck_assert_int_eq(sizeof(req9) - 1,
-	                 parse_http_message(req9, sizeof(req9), &ri));
+	                 parse_http_message(1, req9, sizeof(req9), &ri));
 	ck_assert_int_eq(1, ri.num_headers);
 
 	ck_assert_int_eq(sizeof(req1) - 1,
-	                 parse_http_message(req1, sizeof(req1), &ri));
+	                 parse_http_message(1, req1, sizeof(req1), &ri));
 	ck_assert_str_eq("1.1", ri.http_version);
 	ck_assert_int_eq(0, ri.num_headers);
 
-	ck_assert_int_eq(-1, parse_http_message(req2, sizeof(req2), &ri));
-	ck_assert_int_eq(0, parse_http_message(req3, sizeof(req3), &ri));
-	ck_assert_int_eq(0, parse_http_message(req6, sizeof(req6), &ri));
-	ck_assert_int_eq(0, parse_http_message(req7, sizeof(req7), &ri));
-	ck_assert_int_eq(0, parse_http_message(empty, 0, &ri));
+	ck_assert_int_eq(-1, parse_http_message(1, req2, sizeof(req2), &ri));
+	ck_assert_int_eq(sizeof(req2a) - 1,
+	                 parse_http_message(0, req2a, sizeof(req2a), &ri));
+	ck_assert_int_eq(0, parse_http_message(1, req3, sizeof(req3), &ri));
+	ck_assert_int_eq(0, parse_http_message(0, req6, sizeof(req6), &ri));
+	ck_assert_int_eq(0, parse_http_message(1, req6a, sizeof(req6a), &ri));
+	ck_assert_int_eq(0, parse_http_message(1, req7, sizeof(req7), &ri));
+	ck_assert_int_eq(0, parse_http_message(1, empty, 0, &ri));
 	ck_assert_int_eq(sizeof(req8) - 1,
-	                 parse_http_message(req8, sizeof(req8), &ri));
+	                 parse_http_message(1, req8, sizeof(req8), &ri));
 
 	/* TODO(lsm): Fix this. Header value may span multiple lines. */
 	ck_assert_int_eq(sizeof(req4) - 1,
-	                 parse_http_message(req4, sizeof(req4), &ri));
+	                 parse_http_message(1, req4, sizeof(req4), &ri));
 	ck_assert_str_eq("1.1", ri.http_version);
 	ck_assert_int_eq(3, ri.num_headers);
 	ck_assert_str_eq("A", ri.http_headers[0].name);
@@ -91,7 +97,7 @@ START_TEST(test_parse_http_message)
 	ck_assert(ri.http_headers[2].value == NULL);
 
 	ck_assert_int_eq(sizeof(req5) - 1,
-	                 parse_http_message(req5, sizeof(req5), &ri));
+	                 parse_http_message(1, req5, sizeof(req5), &ri));
 	ck_assert_str_eq("GET", ri.request_method);
 	ck_assert_str_eq("1.1", ri.http_version);
 }
@@ -113,7 +119,7 @@ START_TEST(test_should_keep_alive)
 
 	memset(&conn, 0, sizeof(conn));
 	conn.ctx = &ctx;
-	ck_assert_int_eq(parse_http_message(req1, sizeof(req1), &conn.request_info),
+	ck_assert_int_eq(parse_http_message(1, req1, sizeof(req1), &conn.request_info),
 	                 sizeof(req1) - 1);
 
 	ctx.config[ENABLE_KEEP_ALIVE] = no;
@@ -126,13 +132,13 @@ START_TEST(test_should_keep_alive)
 	ck_assert_int_eq(should_keep_alive(&conn), 0);
 
 	conn.must_close = 0;
-	parse_http_message(req2, sizeof(req2), &conn.request_info);
+	parse_http_message(1, req2, sizeof(req2), &conn.request_info);
 	ck_assert_int_eq(should_keep_alive(&conn), 0);
 
-	parse_http_message(req3, sizeof(req3), &conn.request_info);
+	parse_http_message(1, req3, sizeof(req3), &conn.request_info);
 	ck_assert_int_eq(should_keep_alive(&conn), 0);
 
-	parse_http_message(req4, sizeof(req4), &conn.request_info);
+	parse_http_message(1, req4, sizeof(req4), &conn.request_info);
 	ck_assert_int_eq(should_keep_alive(&conn), 1);
 
 	conn.status_code = 401;

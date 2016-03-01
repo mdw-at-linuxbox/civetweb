@@ -49,13 +49,18 @@
 static const char *
 locate_resources(void)
 {
+	char *cp;
+
+	cp = getenv("TEST_CERT_DIR");
+	if (cp)
+		return cp;
 	return
 #ifdef _WIN32
 #ifdef LOCAL_TEST
 	    "resources\\";
 #else
 	    /* Appveyor */
-	    "..\\..\\..\\resources\\"; /* TODO: the different paths
+	    ".\\"; /* TODO: the different paths
 	                                            * used in the different test
 	                                            * system is an unsolved
 	                                            * problem */
@@ -65,7 +70,7 @@ locate_resources(void)
 	    "resources/";
 #else
 	    /* Travis */
-	    "../../resources/"; // TODO: fix path in CI test environment
+	    "./"; // TODO: fix path in CI test environment
 #endif
 #endif
 }
@@ -405,6 +410,7 @@ START_TEST(test_mg_server_and_client_tls)
 	char server_cert[256];
 	char client_cert[256];
 	const char *res_dir = locate_resources();
+	char *listening_ports_override;
 
 	ck_assert(res_dir != NULL);
 	strcpy(server_cert, res_dir);
@@ -422,8 +428,10 @@ START_TEST(test_mg_server_and_client_tls)
 	OPTIONS[opt_idx++] = "document_root";
 	OPTIONS[opt_idx++] = ".";
 #endif
+	listening_ports_override = getenv("TEST_PORTS");
 	OPTIONS[opt_idx++] = "listening_ports";
-	OPTIONS[opt_idx++] = "8080r,8443s";
+	OPTIONS[opt_idx++] =
+	    listening_ports_override ? listening_ports_override : "8080r,8443s";
 	OPTIONS[opt_idx++] = "ssl_certificate";
 	OPTIONS[opt_idx++] = server_cert;
 	OPTIONS[opt_idx++] = "ssl_verify_peer";

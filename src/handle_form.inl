@@ -170,7 +170,6 @@ mg_handle_form_data(struct mg_connection *conn,
 	int disposition;
 	int buf_fill = 0;
 	int r;
-	FILE *fstore = NULL;
 
 	int has_body_data =
 	    (conn->request_info.content_length > 0) || (conn->is_chunked);
@@ -248,7 +247,7 @@ mg_handle_form_data(struct mg_connection *conn,
 			}
 			if (disposition == FORM_DISPOSITION_STORE) {
 				/* Store the content to a file */
-				fstore = fopen(path, "wb");
+				FILE *fstore = fopen(path, "wb");
 				if (fstore != NULL) {
 					size_t n = (size_t)fwrite(val, 1, (size_t)vallen, fstore);
 					if ((n != (size_t)vallen) || (ferror(fstore))) {
@@ -325,6 +324,7 @@ mg_handle_form_data(struct mg_connection *conn,
 			ptrdiff_t keylen, vallen;
 			ptrdiff_t used;
 			int end_of_key_value_pair_found = 0;
+			FILE *fstore = NULL;
 
 			if ((size_t)buf_fill < (sizeof(buf) - 1)) {
 

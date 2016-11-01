@@ -3660,6 +3660,13 @@ mg_get_request_link(const struct mg_connection *conn, char *buf, size_t buflen)
 	}
 }
 
+struct sockaddr *
+mg_get_local_addr(struct mg_connection *conn)
+{
+    return &conn->client.lsa.sa;
+}
+
+
 /* Skip the characters until one of the delimiters characters found.
  * 0-terminate resulting word. Skip the delimiter and following whitespaces.
  * Advance pointer to buffer to the next word. Return found 0-terminated

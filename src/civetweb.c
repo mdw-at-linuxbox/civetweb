@@ -2129,6 +2129,7 @@ enum {
   VALIDATE_HTTP_METHOD,
   CANONICALIZE_URL_PATH,
   ALLOW_UNICODE_IN_URLS,
+  TRANSFER_ENCODING_PASSTHRU,
 	NUM_OPTIONS
 };
 
@@ -2231,6 +2232,7 @@ static struct mg_option config_options[] = {
     {"validate_http_method", CONFIG_TYPE_BOOLEAN, "yes"},
     {"canonicalize_url_path", CONFIG_TYPE_BOOLEAN, "yes"},
     {"allow_unicode_in_urls", CONFIG_TYPE_BOOLEAN, "no"},
+    {"transfer_encoding_passthru", CONFIG_TYPE_BOOLEAN, "no"},
     {NULL, CONFIG_TYPE_UNKNOWN, NULL}};
 
 
@@ -2402,6 +2404,7 @@ struct mg_connection {
 	                           * 1 = chunked, do data read yet,
 	                           * 2 = chunked, some data read,
 	                           * 3 = chunked, all data read
+	                           * 4 = chunked, but app promised to handle this
 	                           */
 	size_t chunk_remainder;   /* Unread data from the last chunk */
 	char *buf;                /* Buffer for received data */
@@ -5927,6 +5930,8 @@ discard_unread_request_data(struct mg_connection *conn)
 	to_read = sizeof(buf);
 
 	if (conn->is_chunked) {
+		if (conn->is_chunked == 4)
+			conn->is_chunked = 1;
 		/* Chunked encoding: 3=chunk read completely
 		 * completely */
 		while (conn->is_chunked != 3) {
@@ -6038,6 +6043,8 @@ mg_getc(struct mg_connection *conn)
 int
 mg_read(struct mg_connection *conn, void *buf, size_t len)
 {
+	size_t all_read = 0;
+
 	if (len > INT_MAX) {
 		len = INT_MAX;
 	}
@@ -6046,92 +6053,97 @@ mg_read(struct mg_connection *conn, void *buf, size_t len)
 		return 0;
 	}
 
-	if (conn->is_chunked) {
-		size_t all_read = 0;
+	switch (conn->is_chunked) {
+	case 4:	/* pass thru; application gets all as is. */
+	case 0:
+		all_read = mg_read_inner(conn, buf, len);
+		len = 0;
+		break;
+	default:
+		break;
+	}
 
-		while (len > 0) {
-			if (conn->is_chunked == 3) {
-				/* No more data left to read */
-				return 0;
-			}
-
-			if (conn->chunk_remainder) {
-				/* copy from the remainder of the last received chunk */
-				long read_ret;
-				size_t read_now =
-				    ((conn->chunk_remainder > len) ? (len)
-				                                   : (conn->chunk_remainder));
-
-				conn->content_len += (int)read_now;
-				read_ret =
-				    mg_read_inner(conn, (char *)buf + all_read, read_now);
-
-				if (read_ret < 1) {
-					/* read error */
-					return -1;
-				}
-
-				all_read += (size_t)read_ret;
-				conn->chunk_remainder -= (size_t)read_ret;
-				len -= (size_t)read_ret;
-
-				if (conn->chunk_remainder == 0) {
-					/* Add data bytes in the current chunk have been read,
-					 * so we are expecting \r\n now. */
-					char x1, x2;
-					conn->content_len += 2;
-					x1 = mg_getc(conn);
-					x2 = mg_getc(conn);
-					if ((x1 != '\r') || (x2 != '\n')) {
-						/* Protocol violation */
-						return -1;
-					}
-				}
-
-			} else {
-				/* fetch a new chunk */
-				int i = 0;
-				char lenbuf[64];
-				char *end = 0;
-				unsigned long chunkSize = 0;
-
-				for (i = 0; i < ((int)sizeof(lenbuf) - 1); i++) {
-					conn->content_len++;
-					lenbuf[i] = mg_getc(conn);
-					if ((i > 0) && (lenbuf[i] == '\r')
-					    && (lenbuf[i - 1] != '\r')) {
-						continue;
-					}
-					if ((i > 1) && (lenbuf[i] == '\n')
-					    && (lenbuf[i - 1] == '\r')) {
-						lenbuf[i + 1] = 0;
-						chunkSize = strtoul(lenbuf, &end, 16);
-						if (chunkSize == 0) {
-							/* regular end of content */
-							conn->is_chunked = 3;
-						}
-						break;
-					}
-					if (!isxdigit(lenbuf[i])) {
-						/* illegal character for chunk length */
-						return -1;
-					}
-				}
-				if ((end == NULL) || (*end != '\r')) {
-					/* chunksize not set correctly */
-					return -1;
-				}
-				if (chunkSize == 0) {
-					break;
-				}
-
-				conn->chunk_remainder = chunkSize;
-			}
+	while (len > 0) {
+		if (conn->is_chunked == 3) {
+			/* No more data left to read */
+			return 0;
 		}
 
-		return (int)all_read;
+		if (conn->chunk_remainder) {
+			/* copy from the remainder of the last received chunk */
+			long read_ret;
+			size_t read_now =
+			    ((conn->chunk_remainder > len) ? (len)
+							   : (conn->chunk_remainder));
+
+			conn->content_len += (int)read_now;
+			read_ret =
+			    mg_read_inner(conn, (char *)buf + all_read, read_now);
+
+			if (read_ret < 1) {
+				/* read error */
+				return -1;
+			}
+
+			all_read += (size_t)read_ret;
+			conn->chunk_remainder -= (size_t)read_ret;
+			len -= (size_t)read_ret;
+
+			if (conn->chunk_remainder == 0) {
+				/* Add data bytes in the current chunk have been read,
+				 * so we are expecting \r\n now. */
+				char x1, x2;
+				conn->content_len += 2;
+				x1 = mg_getc(conn);
+				x2 = mg_getc(conn);
+				if ((x1 != '\r') || (x2 != '\n')) {
+					/* Protocol violation */
+					return -1;
+				}
+			}
+
+		} else {
+			/* fetch a new chunk */
+			int i = 0;
+			char lenbuf[64];
+			char *end = 0;
+			unsigned long chunkSize = 0;
+
+			for (i = 0; i < ((int)sizeof(lenbuf) - 1); i++) {
+				conn->content_len++;
+				lenbuf[i] = mg_getc(conn);
+				if ((i > 0) && (lenbuf[i] == '\r')
+				    && (lenbuf[i - 1] != '\r')) {
+					continue;
+				}
+				if ((i > 1) && (lenbuf[i] == '\n')
+				    && (lenbuf[i - 1] == '\r')) {
+					lenbuf[i + 1] = 0;
+					chunkSize = strtoul(lenbuf, &end, 16);
+					if (chunkSize == 0) {
+						/* regular end of content */
+						conn->is_chunked = 3;
+					}
+					break;
+				}
+				if (!isxdigit(lenbuf[i])) {
+					/* illegal character for chunk length */
+					return -1;
+				}
+			}
+			if ((end == NULL) || (*end != '\r')) {
+				/* chunksize not set correctly */
+				return -1;
+			}
+			if (chunkSize == 0) {
+				break;
+			}
+
+			conn->chunk_remainder = chunkSize;
+		}
 	}
-	return mg_read_inner(conn, buf, len);
+
+	return (int)all_read;
 }
 
 
@@ -15384,6 +15396,16 @@ get_request(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 
 	/* Message is a valid request */
 	if ((cl = get_header(conn->request_info.http_headers,
+	                            conn->request_info.num_headers,
+	                            "Transfer-Encoding")) != NULL
+	           && !mg_strcasecmp(cl, "chunked")) {
+		if (!mg_strcasecmp(conn->ctx->config[TRANSFER_ENCODING_PASSTHRU], "yes")) {
+			conn->is_chunked = 4;
+		} else {
+			conn->is_chunked = 1;
+		}
+		conn->content_len = -1; /* unknown content length */
+	} else if ((cl = get_header(conn->request_info.http_headers,
 	                     conn->request_info.num_headers,
 	                     "Content-Length")) != NULL) {
 		/* Request/response has content length set */
@@ -15401,12 +15423,6 @@ get_request(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 		}
 		/* Publish the content length back to the request info. */
 		conn->request_info.content_length = conn->content_len;
-	} else if ((cl = get_header(conn->request_info.http_headers,
-	                            conn->request_info.num_headers,
-	                            "Transfer-Encoding")) != NULL
-	           && !mg_strcasecmp(cl, "chunked")) {
-		conn->is_chunked = 1;
-		conn->content_len = -1; /* unknown content length */
 	} else if (get_http_method_info(conn->request_info.request_method)
 	               ->request_has_body) {
 		/* POST or PUT request without content length set */

@@ -15396,6 +15396,12 @@ get_request(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 
 	/* Message is a valid request */
 	if ((cl = get_header(conn->request_info.http_headers,
+	                            conn->request_info.num_headers,
+	                            "Transfer-Encoding")) != NULL
+	           && !mg_strcasecmp(cl, "chunked")) {
+		conn->is_chunked = 1;
+		conn->content_len = -1; /* unknown content length */
+	} else if ((cl = get_header(conn->request_info.http_headers,
 	                     conn->request_info.num_headers,
 	                     "Content-Length")) != NULL) {
 		/* Request/response has content length set */
@@ -15413,12 +15419,6 @@ get_request(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 		}
 		/* Publish the content length back to the request info. */
 		conn->request_info.content_length = conn->content_len;
-	} else if ((cl = get_header(conn->request_info.http_headers,
-	                            conn->request_info.num_headers,
-	                            "Transfer-Encoding")) != NULL
-	           && !mg_strcasecmp(cl, "chunked")) {
-		conn->is_chunked = 1;
-		conn->content_len = -1; /* unknown content length */
 	} else if (get_http_method_info(conn->request_info.request_method)
 	               ->request_has_body) {
 		/* POST or PUT request without content length set */

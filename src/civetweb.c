@@ -6122,9 +6122,15 @@ mg_read(struct mg_connection *conn, void *buf, size_t len)
 					return -1;
 				}
 				if (chunkSize == 0) {
+					/* must consume an extra crlf too */
+					conn->content_len += 2;
+					i = mg_read_inner(conn, lenbuf, 2);
+					if (i != 2 || lenbuf[0] != '\r' || lenbuf[1] != '\n') {
+						/* Protcol violation */
+						return -1;
+					}
 					break;
 				}
-
 				conn->chunk_remainder = chunkSize;
 			}
 		}

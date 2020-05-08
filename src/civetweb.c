@@ -6090,41 +6090,58 @@ mg_read(struct mg_connection *conn, void *buf, size_t len)
 
 			} else {
 				/* fetch a new chunk */
-				int i = 0;
+				int i;
 				char lenbuf[64];
 				char *end = 0;
 				unsigned long chunkSize = 0;
+				int in_count = 1;
+				int c, lastc;
 
-				for (i = 0; i < ((int)sizeof(lenbuf) - 1); i++) {
+				for (c = 0, i = 0; ; ) {
 					conn->content_len++;
-					lenbuf[i] = mg_getc(conn);
-					if ((i > 0) && (lenbuf[i] == '\r')
-					    && (lenbuf[i - 1] != '\r')) {
-						continue;
-					}
-					if ((i > 1) && (lenbuf[i] == '\n')
-					    && (lenbuf[i - 1] == '\r')) {
-						lenbuf[i + 1] = 0;
-						chunkSize = strtoul(lenbuf, &end, 16);
-						if (chunkSize == 0) {
-							/* regular end of content */
-							conn->is_chunked = 3;
-						}
-						break;
-					}
-					if (!isxdigit(lenbuf[i])) {
-						/* illegal character for chunk length */
+					lastc = c;
+					c = mg_getc(conn);
+					if (c == 0) {
 						return -1;
 					}
+					else if (lastc == '\r' && c == '\n') {
+						break;
+					}
+					else if (!in_count)
+						;
+					else if (c == ';' || c == '\r') {
+						in_count = 0;
+					} else if (!isxdigit(c)) {
+						/* illegal character for chunk length */
+						return -1;
+					} else if (i >= ((int)sizeof(lenbuf) - 1)) {
+						/* waaay too long */
+						return -1;
+					} else {
+						lenbuf[i++] = c;
+					}
 				}
-				if ((end == NULL) || (*end != '\r')) {
-					/* chunksize not set correctly */
+				if (!i) {
+					/* no chunksize, error */
+					return -1;
+				}
+				lenbuf[i] = 0;
+				chunkSize = strtoul(lenbuf, &end, 16);
+				if (i != end - lenbuf) {
+					/* can't happen, except maybe erange? */
 					return -1;
 				}
 				if (chunkSize == 0) {
+					/* regular end of content */
+					conn->is_chunked = 3;
+					conn->content_len += 2;
+					c = mg_read_inner(conn, lenbuf, 2);
+					if (c != 2 || lenbuf[0] != '\r' || lenbuf[1] != '\n') {
+						/* Protcol violation */
+						return -1;
+					}
 					break;
 				}
-
 				conn->chunk_remainder = chunkSize;
 			}
 		}

@@ -1007,6 +1007,9 @@ mg_download(const char *host,
 /* Close the connection opened by mg_download(). */
 CIVETWEB_API void mg_close_connection(struct mg_connection *conn);
 
+CIVETWEB_API void mg_set_must_close(struct mg_connection *conn, int f);
+
+
 
 #if defined(MG_LEGACY_INTERFACE)
 /* File upload functionality. Each uploaded file gets saved into a temporary

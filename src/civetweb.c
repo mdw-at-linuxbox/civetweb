@@ -14857,6 +14857,12 @@ mg_close_connection(struct mg_connection *conn)
 #endif /* defined(USE_WEBSOCKET) */
 }
 
+void
+mg_set_must_close(struct mg_connection *conn, int f)
+{
+	conn->must_close = f;
+}
+
 
 /* Only for memory statistics */
 static struct mg_context common_client_context;

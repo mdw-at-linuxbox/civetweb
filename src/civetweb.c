@@ -2129,6 +2129,7 @@ enum {
   VALIDATE_HTTP_METHOD,
   CANONICALIZE_URL_PATH,
   ALLOW_UNICODE_IN_URLS,
+  ENABLE_UNSAFE_REQUEST_SMUGGLING,
 	NUM_OPTIONS
 };
 
@@ -2231,6 +2232,7 @@ static struct mg_option config_options[] = {
     {"validate_http_method", CONFIG_TYPE_BOOLEAN, "yes"},
     {"canonicalize_url_path", CONFIG_TYPE_BOOLEAN, "yes"},
     {"allow_unicode_in_urls", CONFIG_TYPE_BOOLEAN, "no"},
+    {"enable_unsafe_request_smuggling", CONFIG_TYPE_BOOLEAN, "no"},
     {NULL, CONFIG_TYPE_UNKNOWN, NULL}};
 
 
@@ -15399,6 +15401,20 @@ get_request(struct mg_connection *conn, char *ebuf, size_t ebuf_len, int *err)
 	                            conn->request_info.num_headers,
 	                            "Transfer-Encoding")) != NULL
 	           && !mg_strcasecmp(cl, "chunked")) {
+		if ((cl = get_header(conn->request_info.http_headers,
+				conn->request_info.num_headers,
+				"Content-Length")) != NULL &&
+		    mg_strcasecmp(conn->ctx->config[ENABLE_UNSAFE_REQUEST_SMUGGLING],
+			"yes")) {
+			mg_snprintf(conn,
+			            NULL, /* No truncation check for ebuf */
+			            ebuf,
+			            ebuf_len,
+			            "%s",
+			            "Proxy request smuggling not allowed");
+			*err = 400;
+			return 0;
+		}
 		conn->is_chunked = 1;
 		conn->content_len = -1; /* unknown content length */
 	} else if ((cl = get_header(conn->request_info.http_headers,
